@@ -1,5 +1,7 @@
 package edu.berkeley.compbio.jlibsvm.kernel;
 
+import java.util.Properties;
+
 import edu.berkeley.compbio.jlibsvm.util.MathSupport;
 import edu.berkeley.compbio.jlibsvm.util.SparseVector;
 
@@ -11,10 +13,16 @@ public class LinearKernel implements KernelFunction<SparseVector>
 	{
 // ------------------------ CANONICAL METHODS ------------------------
 
-	public String toString()
+  public LinearKernel() {
+  }
+
+  public LinearKernel(Properties props) {
+  }
+
+  public String toString()
 		{
 		StringBuilder sb = new StringBuilder();
-		sb.append("kernel_type linear\n");
+		sb.append("kernel_type " + this.getClass().getName() + "\n");
 		return sb.toString();
 		}
 

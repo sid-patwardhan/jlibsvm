@@ -1,9 +1,27 @@
 package edu.berkeley.compbio.jlibsvm.multi;
 
-import com.google.common.base.Function;
+import java.io.BufferedReader;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutionException;
+
+import org.apache.log4j.Logger;
+import org.jetbrains.annotations.NotNull;
+
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import com.google.common.collect.HashMultiset;
-import com.google.common.collect.MapMaker;
 import com.google.common.collect.Multiset;
+
 import edu.berkeley.compbio.jlibsvm.DiscreteModel;
 import edu.berkeley.compbio.jlibsvm.ImmutableSvmParameter;
 import edu.berkeley.compbio.jlibsvm.SolutionModel;
@@ -13,14 +31,7 @@ import edu.berkeley.compbio.jlibsvm.kernel.KernelFunction;
 import edu.berkeley.compbio.jlibsvm.scaler.NoopScalingModel;
 import edu.berkeley.compbio.jlibsvm.scaler.ScalingModel;
 import edu.berkeley.compbio.ml.MultiClassCrossValidationResults;
-import org.apache.log4j.Logger;
-import org.jetbrains.annotations.NotNull;
 import sun.reflect.generics.reflectiveObjects.NotImplementedException;
-
-import java.io.BufferedReader;
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.util.*;
 
 /**
  * @author <a href="mailto:dev@davidsoergel.com">David Soergel</a>
@@ -185,18 +196,30 @@ public class MultiClassModel<L extends Comparable, P> extends SolutionModel<L, P
         // stage 0: we're going to need the kernel value for x against each of the SVs, for each of the kernels that was used in a subsidary binary machine
 
         //	KValueCache kValuesPerKernel = new KValueCache(scaledX);
-        Map<KernelFunction<P>, float[]> kValuesPerKernel =
-                new MapMaker().makeComputingMap(new Function<KernelFunction<P>, float[]>() {
-                    public float[] apply(@NotNull KernelFunction<P> kernel) {
-                        float[] kvalues = new float[allSVs.length];
-                        int i = 0;
-                        for (P sv : allSVs) {
-                            kvalues[i] = (float) kernel.evaluate(scaledX, sv);
-                            i++;
-                        }
-                        return kvalues;
-                    }
-                });
+        LoadingCache<KernelFunction<P>, float[]> kValuesPerKernel = CacheBuilder.newBuilder().build(new CacheLoader<KernelFunction<P>, float[]>() {
+          public float[] load(@NotNull KernelFunction<P> kernel) {
+            float[] kvalues = new float[allSVs.length];
+            int i = 0;
+            for (P sv : allSVs) {
+                kvalues[i] = (float) kernel.evaluate(scaledX, sv);
+                i++;
+            }
+            return kvalues;
+          }
+        });
+
+        // Map<KernelFunction<P>, float[]> kValuesPerKernel =
+        //        new MapMaker().makeComputingMap(new Function<KernelFunction<P>, float[]>() {
+        //            public float[] apply(@NotNull KernelFunction<P> kernel) {
+        //                float[] kvalues = new float[allSVs.length];
+        //                int i = 0;
+        //                for (P sv : allSVs) {
+        //                    kvalues[i] = (float) kernel.evaluate(scaledX, sv);
+        //                    i++;
+        //                }
+        //                return kvalues;
+        //            }
+        //        });
 
         // we don't want to consider any models that mention a disallowed label
         // (i.e., not only should such a prediction be rejected after the fact, but
@@ -254,7 +277,7 @@ public class MultiClassModel<L extends Comparable, P> extends SolutionModel<L, P
 
 
         Map<L, Float> oneVsAllProbabilities =
-                oneVsAllMode == OneVsAllMode.None ? null : computeOneVsAllProbabilities(kValuesPerKernel);
+                oneVsAllMode == OneVsAllMode.None ? null : computeOneVsAllProbabilities(kValuesPerKernel.asMap());
 
         // now oneVsAllProbabilities is populated with all of the classes that pass the threshold (maybe all of them).
 
@@ -297,7 +320,12 @@ public class MultiClassModel<L extends Comparable, P> extends SolutionModel<L, P
             // This is what PhyloPythia does.
 
             for (BinaryModel<L, P> binaryModel : oneVsOneModels.values()) {
-                float[] kvalues = kValuesPerKernel.get(binaryModel.param.kernel);
+                float[] kvalues;
+                try {
+                  kvalues = kValuesPerKernel.get(binaryModel.param.kernel);
+                } catch (ExecutionException e) {
+                  throw new RuntimeException(e);
+                }
                 votes.add(binaryModel.predictLabel(kvalues, svIndexMaps.get(binaryModel)));
             }
         } else {
